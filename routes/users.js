@@ -1,5 +1,5 @@
 const express = require('express');
-const User = require('../models/User');
+const User = require('../models/user');
 const Task = require('../models/Task');
 const parseQuery = require('../middleware/queryParser');
 const { ok, created, badRequest, notFound, serverError } = require('../utils/responses');
