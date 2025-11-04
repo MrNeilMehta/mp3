@@ -91,13 +91,16 @@ def main(argv):
         # POST the user
         conn.request("POST", "/api/users", params, headers)
         response = conn.getresponse()
-        data = response.read()
+        data = response.read().decode()
         d = json.loads(data)
 
-        # Store the users id
-        userIDs.append(str(d['data']['_id']))
-        userNames.append(str(d['data']['name']))
-        userEmails.append(str(d['data']['email']))
+        if d.get("data") and d.get("message") == "Created":
+            userIDs.append(str(d['data']['_id']))
+            userNames.append(str(d['data']['name']))
+            userEmails.append(str(d['data']['email']))
+        else:
+            print(f"❌ Failed to create user {name}: {d.get('message')}")
+            continue
 
     # Open 'tasks.txt' for sample task names
     f = open('tasks.txt','r')
