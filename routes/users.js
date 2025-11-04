@@ -18,6 +18,7 @@ router.get('/', parseQuery, async (req, res) => {
             const result = await User.countDocuments(where);
             return ok(res, result);
         }
+        
         const users = await query.exec();
         return ok(res, users);
     } catch (err) {
