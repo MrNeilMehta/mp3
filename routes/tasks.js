@@ -1,193 +1,121 @@
 const express = require('express');
 const Task = require('../models/Task');
+<<<<<<< HEAD
 const User = require('../models/user');
 const parseQuery = require('../middleware/queryParser');
 const { ok, created, badRequest, notFound, serverError } = require('../utils/responses');
+=======
+const User = require('../models/User');
+>>>>>>> 55c677b (update)
 
 const router = express.Router();
 
-// Helper to sync user.pendingTasks with a single task
-async function syncPendingForTask(taskDoc) {
-  // if task is completed → ensure it is NOT in pendingTasks
-  // if task is not completed and assignedUser is set → ensure it IS in that user's pendingTasks
-  // if no assignedUser → ensure it is absent from all users' pendingTasks (safety)
-  const taskIdStr = String(taskDoc._id);
+const safeParseJSON = (raw, fallback = {}) => { if (raw == null) return fallback; try { return JSON.parse(raw); } catch { return fallback; } };
+const asInt = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+const sendOk = (res, data) => res.status(200).json({ message: 'OK', data });
+const sendCreated = (res, data) => res.status(201).json({ message: 'Created', data });
+const sendBad = (res, msg) => res.status(400).json({ message: msg, data: null });
+const sendNotFound = (res, msg = 'Not found') => res.status(404).json({ message: msg, data: null });
+const sendServerErr = (res, msg = 'Server error') => res.status(500).json({ message: msg, data: null });
 
-  if (!taskDoc.assignedUser) {
-    await User.updateMany(
-      { pendingTasks: taskIdStr },
-      { $pull: { pendingTasks: taskIdStr } }
-    );
-    return;
-  }
-
-  const user = await User.findById(taskDoc.assignedUser);
-  if (!user) return; // If dangling, skip
-
-  const shouldBePending = !taskDoc.completed;
-  if (shouldBePending) {
-    // add if missing
-    if (!user.pendingTasks.includes(taskIdStr)) {
-      user.pendingTasks.push(taskIdStr);
-      await user.save();
-    }
-  } else {
-    // remove if present
-    if (user.pendingTasks.includes(taskIdStr)) {
-      user.pendingTasks = user.pendingTasks.filter((id) => id !== taskIdStr);
-      await user.save();
-    }
-  }
-}
-
-// GET /api/tasks
-router.get('/', parseQuery, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const { where, sort, select, skip, limit, count } = req.parsedQuery;
-    let q = Task.find(where, select);
+    const where = safeParseJSON(req.query.where, {});
+    const sort = safeParseJSON(req.query.sort, null);
+    const select = safeParseJSON(req.query.select, null);
+    const skip = asInt(req.query.skip, 0);
+    const limit = asInt(req.query.limit, 100);
+    const count = req.query.count === 'true';
+    if (count) return sendOk(res, await Task.countDocuments(where));
+    let q = Task.find(where);
     if (sort) q = q.sort(sort);
-    if (typeof skip === 'number') q = q.skip(skip);
-    // MP says default limit 100 for tasks
-    q = q.limit(typeof limit === 'number' ? limit : 100);
-
-    if (count) {
-      const c = await Task.countDocuments(where);
-      return ok(res, c);
-    }
-    const tasks = await q.exec();
-    return ok(res, tasks);
-  } catch (e) {
-    return serverError(res, 'Failed to fetch tasks');
-  }
+    if (select) q = q.select(select);
+    if (skip) q = q.skip(skip);
+    if (limit) q = q.limit(limit);
+    return sendOk(res, await q.exec());
+  } catch { return sendServerErr(res); }
 });
 
-// POST /api/tasks
+router.get('/:id', async (req, res) => {
+  try {
+    const select = safeParseJSON(req.query.select, null);
+    const doc = await Task.findById(req.params.id).select(select || undefined);
+    if (!doc) return sendNotFound(res);
+    return sendOk(res, doc);
+  } catch { return sendServerErr(res); }
+});
+
 router.post('/', async (req, res) => {
   try {
-    const {
-      name,
-      description = '',
-      deadline,
-      completed = false,
-      assignedUser = '',
-      assignedUserName
-    } = req.body || {};
-
-    if (!name || !deadline) return badRequest(res, 'name and deadline are required');
-
-    let finalAssignedUser = assignedUser;
-    let finalAssignedUserName = assignedUserName;
-
-    if (finalAssignedUser) {
-      const user = await User.findById(finalAssignedUser);
-      if (!user) return badRequest(res, 'assignedUser does not exist');
-      // If name not provided, derive it; otherwise trust provided (must still be consistent)
-      finalAssignedUserName = finalAssignedUserName || user.name;
-    } else {
-      finalAssignedUser = '';
-      finalAssignedUserName = 'unassigned';
-    }
-
-    const task = await Task.create({
-      name,
-      description,
-      deadline,
-      completed,
-      assignedUser: finalAssignedUser,
-      assignedUserName: finalAssignedUserName
+    const { name, description, deadline, completed, assignedUser, assignedUserName } = req.body;
+    if (!name || !deadline) return sendBad(res, 'Name and deadline are required');
+    const task = new Task({
+      name: String(name).trim(),
+      description: description || '',
+      deadline: new Date(deadline),
+      completed: !!completed,
+      assignedUser: assignedUser || '',
+      assignedUserName: assignedUser ? (assignedUserName || 'unassigned') : 'unassigned'
     });
-
-    await syncPendingForTask(task);
-    return created(res, task);
-  } catch (e) {
-    return serverError(res, 'Failed to create task');
-  }
+    if (task.assignedUser) {
+        const u = await User.findById(task.assignedUser);
+        if (u) {
+          task.assignedUserName = u.name;
+        } else {
+          task.assignedUser = '';
+          task.assignedUserName = 'unassigned';
+        }
+    }      
+    await task.save();
+    if (task.assignedUser) {
+      await User.updateOne({ _id: task.assignedUser }, { $addToSet: { pendingTasks: String(task._id) } });
+    }
+    return sendCreated(res, task);
+  } catch { return sendServerErr(res); }
 });
 
-// GET /api/tasks/:id (supports ?select=)
-router.get('/:id', parseQuery, async (req, res) => {
-  try {
-    const { select } = req.parsedQuery;
-    const task = await Task.findById(req.params.id, select).exec();
-    if (!task) return notFound(res, 'Task not found');
-    return ok(res, task);
-  } catch (e) {
-    return serverError(res, 'Failed to fetch task');
-  }
-});
-
-// PUT /api/tasks/:id (replace entire task)
 router.put('/:id', async (req, res) => {
   try {
-    const {
-      name,
-      description = '',
-      deadline,
-      completed = false,
-      assignedUser = '',
-      assignedUserName
-    } = req.body || {};
-
-    if (!name || !deadline) return badRequest(res, 'name and deadline are required');
-
+    const { name, description, deadline, completed, assignedUser, assignedUserName } = req.body;
+    if (!name || !deadline) return sendBad(res, 'Name and deadline are required');
     const task = await Task.findById(req.params.id);
-    if (!task) return notFound(res, 'Task not found');
+    if (!task) return sendNotFound(res);
 
-    let finalAssignedUser = assignedUser;
-    let finalAssignedUserName = assignedUserName;
-
-    if (finalAssignedUser) {
-      const user = await User.findById(finalAssignedUser);
-      if (!user) return badRequest(res, 'assignedUser does not exist');
-      finalAssignedUserName = finalAssignedUserName || user.name;
-    } else {
-      finalAssignedUser = '';
-      finalAssignedUserName = 'unassigned';
+    const prevUser = task.assignedUser || '';
+    let nextUser = assignedUser || '';
+    let nextUserName = assignedUserName || 'unassigned';
+    if (nextUser) {
+      const u = await User.findById(nextUser);
+      if (!u) return sendBad(res, 'assignedUser not found');
+      nextUserName = u.name;
     }
 
-    // If task was previously assigned to someone else, remove from their pendingTasks
-    if (task.assignedUser && task.assignedUser !== finalAssignedUser) {
-      await User.updateOne(
-        { _id: task.assignedUser },
-        { $pull: { pendingTasks: String(task._id) } }
-      );
-    }
-
-    task.name = name;
-    task.description = description;
-    task.deadline = deadline;
-    task.completed = completed;
-    task.assignedUser = finalAssignedUser;
-    task.assignedUserName = finalAssignedUserName;
-
+    task.name = String(name).trim();
+    task.description = description || '';
+    task.deadline = new Date(deadline);
+    task.completed = !!completed;
+    task.assignedUser = nextUser;
+    task.assignedUserName = nextUser ? nextUserName : 'unassigned';
     await task.save();
-    await syncPendingForTask(task);
 
-    return ok(res, task);
-  } catch (e) {
-    return serverError(res, 'Failed to update task');
-  }
+    if (String(prevUser) !== String(nextUser)) {
+      if (prevUser) await User.updateOne({ _id: prevUser }, { $pull: { pendingTasks: String(task._id) } });
+      if (nextUser) await User.updateOne({ _id: nextUser }, { $addToSet: { pendingTasks: String(task._id) } });
+    }
+    return sendOk(res, task);
+  } catch { return sendServerErr(res); }
 });
 
-// DELETE /api/tasks/:id
 router.delete('/:id', async (req, res) => {
   try {
     const task = await Task.findById(req.params.id);
-    if (!task) return notFound(res, 'Task not found');
-
-    // Remove from assigned user's pendingTasks (if present)
+    if (!task) return sendNotFound(res);
     if (task.assignedUser) {
-      await User.updateOne(
-        { _id: task.assignedUser },
-        { $pull: { pendingTasks: String(task._id) } }
-      );
+      await User.updateOne({ _id: task.assignedUser }, { $pull: { pendingTasks: String(task._id) } });
     }
-
-    await Task.deleteOne({ _id: task._id });
-    return ok(res, { _id: String(task._id) });
-  } catch (e) {
-    return serverError(res, 'Failed to delete task');
-  }
+    await task.deleteOne();
+    return sendOk(res, null);
+  } catch { return sendServerErr(res); }
 });
 
 module.exports = router;

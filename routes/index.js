@@ -1,9 +1,17 @@
-module.exports = function (app) {
-  app.use('/api/users', require('./users'));
-  app.use('/api/tasks', require('./tasks'));
+const express = require('express');
 
-  // Optional base route
-  app.get('/api', (req, res) => {
-    res.json({ message: "OK", data: "API working" });
+const usersRouter = require('./users');
+const tasksRouter = require('./tasks');
+
+module.exports = (app /*, router not needed */) => {
+  app.get('/api/health', (_req, res) => {
+    res.status(200).json({ message: 'OK', data: { status: 'up' } });
+  });
+
+  app.use('/api/users', usersRouter);
+  app.use('/api/tasks', tasksRouter);
+
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ message: 'Not found', data: null });
   });
 };

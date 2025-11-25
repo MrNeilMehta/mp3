@@ -1,50 +1,51 @@
+// ===== server.js =====
+
+// ----- Imports -----
 const express = require('express');
 const mongoose = require('mongoose');
-const dotenv = require('dotenv');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const cors = require('cors');
+require('dotenv').config();
 
-dotenv.config();
-
+// ----- App setup -----
 const app = express();
+const port = process.env.PORT || 3000;
+
+// ----- CORS -----
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header(
+    'Access-Control-Allow-Headers',
+    'X-Requested-With, X-HTTP-Method-Override, Content-Type, Accept'
+  );
+  res.header('Access-Control-Allow-Methods', 'POST, GET, PUT, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// ----- Body parsing -----
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.use(helmet());
-app.use(cors());
-app.use(morgan('dev'));
 
-const PORT = process.env.PORT || 3000;
-const MONGODB_URI = process.env.MONGODB_URI;
-
-mongoose.set('strictQuery', true);
+// ===== MongoDB Connection =====
+mongoose.set('strictQuery', false);
 
 mongoose
-  .connect(MONGODB_URI)
-  .then(() => console.log('Connected to MongoDB Atlas'))
+  .connect(process.env.MONGODB_URI) // modern syntax — no deprecated options
+  .then(() => console.log('✅ MongoDB connected'))
   .catch((err) => {
-    console.error('MongoDB connection error:', err.message);
+    console.error('❌ MongoDB connection error:', err.message);
     process.exit(1);
   });
 
-// Routes
-app.get('/api', (req, res) => {
-  res.status(200).json({ message: 'OK', data: { service: 'APIed Piper' } });
-});
-app.use(express.json());
-app.use('/api/users', require('./routes/users'));
-app.use('/api/tasks', require('./routes/tasks'));
-
-// 404 fallback
-app.use((req, res) => {
-  res.status(404).json({ message: 'Not found', data: null });
+// ===== Health Check =====
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ message: 'OK', data: { status: 'up' } });
 });
 
-// Error handler (generic)
-app.use((err, req, res, next) => {
-  console.error(err);
-  const status = err.statusCode || 500;
-  const message = err.expose ? err.message : 'Server error';
-  res.status(status).json({ message, data: null });
-});
+// ===== Routes =====
+// routes/index.js must export a function that takes (app)
+require('./routes')(app);
 
-app.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
+// ===== Start Server =====
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
