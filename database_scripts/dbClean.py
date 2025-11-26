@@ -64,7 +64,7 @@ def main(argv):
              port = int(arg)
 
     # Server to connect to (1: url, 2: port number)
-    conn = http.client.HTTPConnection(baseurl, port)
+    conn = http.client.HTTPSConnection(baseurl, port)
 
     # Fetch a list of users
     users = getUsers(conn)

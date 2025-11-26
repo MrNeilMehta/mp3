@@ -1,36 +1,30 @@
-#!/usr/bin/env python
-
-"""
- * @file dbFill.py
- * Used in CS498RK MP4 to populate database with randomly generated users and tasks.
- *
- * @author Aswin Sivaraman
- * @date Created: Spring 2015
- * @date Modified: Spring 2015
- * @date Modified: Spring 2019
-"""
+#!/usr/bin/env python3
 
 import sys
 import getopt
-import http.client
 import json
+import http.client
+import ssl
 from random import randint, choice
-from datetime import date
 from time import mktime
+from datetime import date
 
 
 def usage():
     print('Usage: dbFill.py -u <baseurl> -p <port> -n <numUsers> -t <numTasks>')
 
 
+def make_conn(host, port):
+    ctx = ssl._create_unverified_context()
+    return http.client.HTTPSConnection(host, port, timeout=10, context=ctx)
+
+
 def main(argv):
-    # Default values
     baseurl = "localhost"
     port = 3000
     userCount = 20
     taskCount = 100
 
-    # Parse CLI args
     try:
         opts, args = getopt.getopt(argv, "hu:p:n:t:", ["url=", "port=", "users=", "tasks="])
     except getopt.GetoptError:
@@ -38,11 +32,8 @@ def main(argv):
         sys.exit(2)
 
     for opt, arg in opts:
-        if opt == "-h":
-            usage()
-            sys.exit()
-        elif opt in ("-u", "--url"):
-            baseurl = str(arg)
+        if opt in ("-u", "--url"):
+            baseurl = arg
         elif opt in ("-p", "--port"):
             port = int(arg)
         elif opt in ("-n", "--users"):
@@ -50,88 +41,64 @@ def main(argv):
         elif opt in ("-t", "--tasks"):
             taskCount = int(arg)
 
-    # Sample first & last names
-    firstNames = ["james", "john", "robert", "michael", "william", "david", "richard", "charles", "joseph", "thomas"]
-    lastNames = ["smith", "johnson", "williams", "jones", "brown", "davis", "miller", "wilson", "moore", "taylor"]
-
-    # Connect to local API
-    conn = http.client.HTTPConnection(baseurl, port)
-    headers = {"Content-type": "application/json", "Accept": "application/json"}
-
-    userIDs, userNames, userEmails = [], [], []
-
     print(f"🚀 Adding {userCount} users and {taskCount} tasks to {baseurl}:{port}")
 
-    # ---------- CREATE USERS ----------
-    for i in range(userCount):
-        x, y = randint(0, len(firstNames) - 1), randint(0, len(lastNames) - 1)
-        user_name = f"{firstNames[x]} {lastNames[y]}"
-        email = f"{firstNames[x]}{lastNames[y]}{randint(1000,9999)}@example.com"
+    conn = make_conn(baseurl, port)
+    headers = {"Content-Type": "application/json"}
 
-        body = json.dumps({
-            "name": user_name,
-            "email": email
-        })
+    # Sample names
+    first = ["james", "john", "michael", "william", "david"]
+    last = ["smith", "johnson", "williams", "brown", "jones"]
+
+    userIDs = []
+
+    # CREATE USERS
+    for i in range(userCount):
+        fname = choice(first)
+        lname = choice(last)
+        name = f"{fname} {lname}"
+        email = f"{fname}{lname}{randint(1000,9999)}@example.com"
+
+        body = json.dumps({"name": name, "email": email})
 
         conn.request("POST", "/api/users", body, headers)
-        response = conn.getresponse()
-        data = response.read().decode()
+        res = conn.getresponse()
+        data = res.read().decode()
+
         try:
             d = json.loads(data)
+            if "data" in d:
+                userIDs.append(d["data"]["_id"])
         except:
-            print(f"❌ Bad JSON from server for user {user_name}")
-            continue
+            pass
 
-        if d.get("data") and d.get("message") == "Created":
-            userIDs.append(str(d["data"]["_id"]))
-            userNames.append(str(d["data"]["name"]))
-            userEmails.append(str(d["data"]["email"]))
-        else:
-            print(f"❌ Failed to create user '{user_name}': {d.get('message')}")
-            continue
-
-    # ---------- LOAD TASK NAMES ----------
+    # LOAD TASK NAMES
     try:
-        with open("tasks.txt", "r") as f:
+        with open("tasks.txt") as f:
             taskNames = f.read().splitlines()
-    except FileNotFoundError:
-        print("❌ tasks.txt not found. Please place it in the same folder as dbFill.py.")
+    except:
+        print("❌ Missing tasks.txt")
         sys.exit(1)
 
-    # ---------- CREATE TASKS ----------
+    # CREATE TASKS
     for i in range(taskCount):
-        assigned = randint(0, 10) > 4
-        assignedUser = randint(0, len(userIDs) - 1) if assigned and userIDs else -1
-        assignedUserID = userIDs[assignedUser] if assigned and userIDs else ""
-        assignedUserName = userNames[assignedUser] if assigned and userNames else "unassigned"
-        completed = randint(0, 10) > 5
-        deadline = (mktime(date.today().timetuple()) + randint(86400, 864000)) * 1000
-        description = "Auto-generated task for CS409 MP3 testing."
+        assigned = randint(0, 10) > 5 and len(userIDs) > 0
+        uid = choice(userIDs) if assigned else ""
+        uname = "unassigned"
 
         body = json.dumps({
             "name": choice(taskNames),
-            "deadline": deadline,
-            "description": description,
-            "completed": completed,
-            "assignedUser": assignedUserID,
-            "assignedUserName": assignedUserName
+            "deadline": (mktime(date.today().timetuple()) + randint(1,10)*86400)*1000,
+            "description": "Auto-generated task",
+            "completed": bool(randint(0,1)),
+            "assignedUser": uid,
+            "assignedUserName": uname
         })
 
         conn.request("POST", "/api/tasks", body, headers)
-        response = conn.getresponse()
-        data = response.read().decode()
-        try:
-            d = json.loads(data)
-        except:
-            print("❌ Bad JSON for task creation.")
-            continue
+        conn.getresponse().read()
 
-        if not d.get("data"):
-            print(f"❌ Failed to create task: {d.get('message')}")
-            continue
-
-    conn.close()
-    print(f"✅ Successfully added {len(userIDs)} users and {taskCount} tasks to {baseurl}:{port}")
+    print("✅ Done!")
 
 
 if __name__ == "__main__":
